@@ -7,7 +7,8 @@ use std::sync::atomic::Ordering;
 use std::sync::mpsc;
 use std::sync::mpsc::Receiver;
 
-use crate::{Bus, optimisations};
+use crate::{Bus, interop, optimisations};
+use crate::interop::Argument;
 
 #[derive(Copy, Clone)]
 pub struct Flag {
@@ -17,21 +18,21 @@ pub struct Flag {
     pub zero: bool,
 }
 
-impl std::convert::From<Flag> for u8  {
+impl std::convert::From<Flag> for u8 {
     fn from(flag: Flag) -> u8 {
-        (if flag.swap_sp   { 1 } else { 0 }) << 3 |
-        (if flag.interrupt { 1 } else { 0 }) << 2 |
-        (if flag.carry     { 1 } else { 0 }) << 1 |
-        (if flag.zero      { 1 } else { 0 }) << 0
+        (if flag.swap_sp { 1 } else { 0 }) << 3 |
+            (if flag.interrupt { 1 } else { 0 }) << 2 |
+            (if flag.carry { 1 } else { 0 }) << 1 |
+            (if flag.zero { 1 } else { 0 }) << 0
     }
 }
 
 impl std::convert::From<u8> for Flag {
     fn from(byte: u8) -> Self {
-        let swap_sp   = ((byte >> 3) & 1) != 0;
+        let swap_sp = ((byte >> 3) & 1) != 0;
         let interrupt = ((byte >> 2) & 1) != 0;
-        let carry     = ((byte >> 1) & 1) != 0;
-        let zero      = ((byte >> 0) & 1) != 0;
+        let carry = ((byte >> 1) & 1) != 0;
+        let zero = ((byte >> 0) & 1) != 0;
         Flag { swap_sp, interrupt, carry, zero }
     }
 }
@@ -103,7 +104,12 @@ impl Cpu {
         self.instruction_pointer.wrapping_add(relative_address)
     }
     fn read_source(&mut self, source: Operand) -> Option<(u32, u32)> {
+        self.read_source_and_i_care_if_its_a_pointer(source).map(|(a, b, _)| (a, b))
+
+    }
+    fn read_source_and_i_care_if_its_a_pointer(&mut self, source: Operand) -> Option<(u32, u32, bool)> {
         let mut instruction_pointer_offset = 2; // increment past opcode half
+        let mut pointer = false;
         let source_value = match source {
             Operand::Register => {
                 let register = self.bus.memory.read_8(self.instruction_pointer + instruction_pointer_offset)?;
@@ -112,6 +118,7 @@ impl Cpu {
                 value
             }
             Operand::RegisterPtr(size) => {
+                pointer = true;
                 let register = self.bus.memory.read_8(self.instruction_pointer + instruction_pointer_offset)?;
                 let pointer = self.read_register(register);
                 let value = match size {
@@ -138,6 +145,7 @@ impl Cpu {
                 value
             }
             Operand::ImmediatePtr(size) => {
+                pointer = true;
                 let pointer = self.bus.memory.read_32(self.instruction_pointer + instruction_pointer_offset)?;
                 let value = match size {
                     Size::Byte => self.bus.memory.read_8(pointer)? as u32,
@@ -148,7 +156,7 @@ impl Cpu {
                 value
             }
         };
-        Some((source_value, instruction_pointer_offset))
+        Some((source_value, instruction_pointer_offset, pointer))
     }
     pub fn read_register(&self, register: u8) -> u32 {
         match register {
@@ -161,7 +169,20 @@ impl Cpu {
     }
     pub fn write_register(&mut self, register: u8, word: u32) {
         match register {
-            0..=31 => self.register[register as usize] = word,
+            0..=31 => {
+                self.register[register as usize] = word;
+            },
+            32 => self.stack_pointer = word,
+            33 => self.exception_stack_pointer = word,
+            34 => self.frame_pointer = word,
+            _ => panic!("Invalid register: {}", register),
+        };
+    }
+    pub fn write_register_and_specify_if_its_a_pointer(&mut self, register: u8, word: u32, pointer: bool) {
+        match register {
+            0..=31 => {
+                self.register[register as usize] = word;
+            }
             32 => self.stack_pointer = word,
             33 => self.exception_stack_pointer = word,
             34 => self.frame_pointer = word,
@@ -171,18 +192,18 @@ impl Cpu {
     pub fn print_registers(&mut self) {
         for index in 0..2 {
             println!("r{}: {:#010X} | r{}:  {:#010X} | r{}: {:#010X} | r{}: {:#010X}",
-                index, self.register[index],
-                index + 8, self.register[index + 8],
-                index + 16, self.register[index + 16],
-                index + 24, self.register[index + 24]
+                     index, self.register[index],
+                     index + 8, self.register[index + 8],
+                     index + 16, self.register[index + 16],
+                     index + 24, self.register[index + 24]
             );
         }
         for index in 2..8 {
             println!("r{}: {:#010X} | r{}: {:#010X} | r{}: {:#010X} | r{}: {:#010X}",
-                index, self.register[index],
-                index + 8, self.register[index + 8],
-                index + 16, self.register[index + 16],
-                index + 24, self.register[index + 24]
+                     index, self.register[index],
+                     index + 8, self.register[index + 8],
+                     index + 16, self.register[index + 16],
+                     index + 24, self.register[index + 24]
             );
         }
         println!("rsp: {:#010X} | resp: {:#010X}", self.stack_pointer, self.exception_stack_pointer);
@@ -201,7 +222,7 @@ impl Cpu {
                 let incremented_stack_pointer = self.stack_pointer.overflowing_add(1);
                 self.stack_pointer = incremented_stack_pointer.0;
                 Some(byte)
-            },
+            }
             None => None,
         }
     }
@@ -218,7 +239,7 @@ impl Cpu {
                 let incremented_stack_pointer = self.stack_pointer.overflowing_add(2);
                 self.stack_pointer = incremented_stack_pointer.0;
                 Some(half)
-            },
+            }
             None => None,
         }
     }
@@ -235,7 +256,7 @@ impl Cpu {
                 let incremented_stack_pointer = self.stack_pointer.overflowing_add(4);
                 self.stack_pointer = incremented_stack_pointer.0;
                 Some(word)
-            },
+            }
             None => None,
         }
     }
@@ -1382,7 +1403,7 @@ impl Cpu {
                         let pointer = self.read_register(register);
                         match size {
                             Size::Byte => {
-                                let result =!self.bus.memory.read_8(pointer)?;
+                                let result = !self.bus.memory.read_8(pointer)?;
                                 if should_run {
                                     self.bus.memory.write_8(pointer, result)?;
                                     self.flag.zero = result == 0;
@@ -2267,7 +2288,7 @@ impl Cpu {
                 Some(self.instruction_pointer + instruction_pointer_offset)
             }
             Instruction::Mov(size, condition, destination, source) => {
-                let (source_value, mut instruction_pointer_offset) = self.read_source(source)?;
+                let (source_value, mut instruction_pointer_offset, isptr) = self.read_source_and_i_care_if_its_a_pointer(source)?;
                 let should_run = self.check_condition(condition);
                 match destination {
                     Operand::Register => {
@@ -2275,17 +2296,17 @@ impl Cpu {
                         match size {
                             Size::Byte => {
                                 if should_run {
-                                    self.write_register(register, (self.read_register(register) & 0xFFFFFF00) | (source_value & 0x000000FF));
+                                    self.write_register_and_specify_if_its_a_pointer(register, (self.read_register(register) & 0xFFFFFF00) | (source_value & 0x000000FF), isptr);
                                 }
                             }
                             Size::Half => {
                                 if should_run {
-                                    self.write_register(register, (self.read_register(register) & 0xFFFF0000) | (source_value & 0x0000FFFF));
+                                    self.write_register_and_specify_if_its_a_pointer(register, (self.read_register(register) & 0xFFFF0000) | (source_value & 0x0000FFFF), isptr);
                                 }
                             }
                             Size::Word => {
                                 if should_run {
-                                    self.write_register(register, source_value);
+                                    self.write_register_and_specify_if_its_a_pointer(register, source_value, isptr);
                                 }
                             }
                         }
@@ -2339,7 +2360,7 @@ impl Cpu {
                 Some(self.instruction_pointer + instruction_pointer_offset)
             }
             Instruction::Movz(size, condition, destination, source) => {
-                let (source_value, mut instruction_pointer_offset) = self.read_source(source)?;
+                let (source_value, mut instruction_pointer_offset, isptr) = self.read_source_and_i_care_if_its_a_pointer(source)?;
                 let should_run = self.check_condition(condition);
                 match destination {
                     Operand::Register => {
@@ -2347,17 +2368,17 @@ impl Cpu {
                         match size {
                             Size::Byte => {
                                 if should_run {
-                                    self.write_register(register, source_value & 0x000000FF);
+                                    self.write_register_and_specify_if_its_a_pointer(register, source_value & 0x000000FF, isptr);
                                 }
                             }
                             Size::Half => {
                                 if should_run {
-                                    self.write_register(register, source_value & 0x0000FFFF);
+                                    self.write_register_and_specify_if_its_a_pointer(register, source_value & 0x0000FFFF, isptr);
                                 }
                             }
                             Size::Word => {
                                 if should_run {
-                                    self.write_register(register, source_value);
+                                    self.write_register_and_specify_if_its_a_pointer(register, source_value, isptr);
                                 }
                             }
                         }
@@ -2379,15 +2400,53 @@ impl Cpu {
             }
             Instruction::Call(condition, source) => {
                 let (source_value, instruction_pointer_offset) = self.read_source(source)?;
-                if self.debug {
-                    println!("Calling {:08X}", source_value);
-                }
-                let should_run = self.check_condition(condition);
-                if should_run {
-                    self.push_stack_32(self.instruction_pointer + instruction_pointer_offset);
-                    Some(source_value)
-                } else {
+                let mut lib_man = interop::LIBRARYMANAGER.lock().unwrap();
+                let func_addrs = lib_man.function_addresses.lock().unwrap();
+                if let Some(l) = func_addrs.get(&(source_value as usize)) {
+                    if self.debug {
+                        println!("Calling C interop function at {:X}", source_value);
+                    }
+                    let layout = &lib_man.libraries.get(*l).unwrap().functions.get(&(source_value as usize)).unwrap().layout;
+                    let mut args = Vec::new();
+                    for (i, arg) in layout.iter().enumerate() {
+                        match arg {
+                            Argument::u8(_) => {
+                                args.push(Argument::u8(self.register[i] as u8));
+                            }
+                            Argument::u16(_) => {
+                                args.push(Argument::u16(self.register[i] as u16));
+                            }
+                            Argument::u32(_) => {
+                                args.push(Argument::u32(self.register[i]));
+                            }
+                            Argument::ptr(_) => {
+                                args.push(Argument::ptr(self.bus.memory.get_actual_pointer(self.register[i]).unwrap()));
+                            }
+                        }
+                    }
+                    let should_run = self.check_condition(condition);
+                    if should_run {
+                        let result = lib_man.libraries[*l].attempt_call(source_value as usize, args);
+                        if let Err(e) = result {
+                            println!("CINTEROP: error calling C interop function: {:?}", e);
+                        } else {
+                            self.write_register(0, result.unwrap() as u32);
+                        }
+                    }
                     Some(self.instruction_pointer + instruction_pointer_offset)
+                } else {
+                    drop(func_addrs);
+                    drop(lib_man);
+                    if self.debug {
+                        println!("Calling {:08X}", source_value);
+                    }
+                    let should_run = self.check_condition(condition);
+                    if should_run {
+                        self.push_stack_32(self.instruction_pointer + instruction_pointer_offset);
+                        Some(source_value)
+                    } else {
+                        Some(self.instruction_pointer + instruction_pointer_offset)
+                    }
                 }
             }
             Instruction::Loop(condition, source) => {
@@ -2744,6 +2803,97 @@ impl Cpu {
                 }
                 Some(self.instruction_pointer + instruction_pointer_offset)
             }
+            Instruction::Ldl(condition, destination, source) => {
+                let (source_value, mut instruction_pointer_offset) = self.read_source(source)?;
+                let should_run = self.check_condition(condition);
+                match destination {
+                    Operand::Register => {
+                        let register = self.bus.memory.read_8(self.instruction_pointer + instruction_pointer_offset)?;
+                        instruction_pointer_offset += 1; // increment past 8 bit register number
+                        if should_run {
+                            let res = crate::interop::LIBRARYMANAGER.lock().unwrap().load_dynamic_library(self.bus.memory.read_cstring(source_value)?);
+                            if let Err(e) = res {
+                                panic!("CINTEROP: failed to load dynamic library: {:?}", e);
+                            } else {
+                                self.write_register(register, res.unwrap());
+                            }
+                        }
+                    }
+                    Operand::RegisterPtr(_) => {
+                        let register = self.bus.memory.read_8(self.instruction_pointer + instruction_pointer_offset)?;
+                        let pointer = self.read_register(register);
+                        instruction_pointer_offset += 1; // increment past 8 bit register number
+                        if should_run {
+                            let word = self.bus.memory.read_32(pointer)?;
+                            let res = crate::interop::LIBRARYMANAGER.lock().unwrap().load_dynamic_library(self.bus.memory.read_cstring(source_value)?);
+                            if let Err(e) = res {
+                                panic!("CINTEROP: failed to load dynamic library: {:?}", e);
+                            } else {
+                                self.bus.memory.write_32(word, res.unwrap())?;
+                            }
+                        }
+                    }
+                    Operand::ImmediatePtr(_) => {
+                        let pointer = self.bus.memory.read_32(self.instruction_pointer + instruction_pointer_offset)?;
+                        instruction_pointer_offset += 4; // increment past 32 bit pointer
+                        if should_run {
+                            let word = self.bus.memory.read_32(pointer)?;
+                            let res = crate::interop::LIBRARYMANAGER.lock().unwrap().load_dynamic_library(self.bus.memory.read_cstring(source_value)?);
+                            if let Err(e) = res {
+                                panic!("CINTEROP: failed to load dynamic library: {:?}", e);
+                            } else {
+                                self.bus.memory.write_32(word, res.unwrap())?;
+                            }
+                        }
+                    }
+                    _ => panic!("Attempting to use an immediate value as a destination"),
+                }
+                Some(self.instruction_pointer + instruction_pointer_offset)
+            }
+            Instruction::Bind(condition, destination, source) => {
+                let (source_value, mut instruction_pointer_offset) = self.read_source(source)?;
+                let should_run = self.check_condition(condition);
+                match destination {
+                    Operand::Register => {
+                        let register = self.bus.memory.read_8(self.instruction_pointer + instruction_pointer_offset)?;
+                        instruction_pointer_offset += 1; // increment past 8 bit register number
+                        if should_run {
+                            let final_destination = self.read_register(register);
+                            let res = crate::interop::LIBRARYMANAGER.lock().unwrap().libraries.get_mut(source_value as usize).unwrap()
+                                .load_func(self.bus.memory.read_cstring(source_value)?, final_destination as usize);
+                            if let Err(e) = res {
+                                panic!("CINTEROP: failed to load dynamic library function: {:?}", e);
+                            }
+                        }
+                    }
+                    Operand::RegisterPtr(_) => {
+                        let register = self.bus.memory.read_8(self.instruction_pointer + instruction_pointer_offset)?;
+                        let pointer = self.read_register(register);
+                        instruction_pointer_offset += 1; // increment past 8 bit register number
+                        if should_run {
+                            let word = self.bus.memory.read_32(pointer)?;
+                            let res = crate::interop::LIBRARYMANAGER.lock().unwrap().libraries.get_mut(source_value as usize).unwrap()
+                                .load_func(self.bus.memory.read_cstring(source_value)?, word as usize);
+                            if let Err(e) = res {
+                                panic!("CINTEROP: failed to load dynamic library function: {:?}", e);
+                            }
+                        }
+                    }
+                    Operand::ImmediatePtr(_) => {
+                        let pointer = self.bus.memory.read_32(self.instruction_pointer + instruction_pointer_offset)?;
+                        instruction_pointer_offset += 4; // increment past 32 bit pointer
+                        if should_run {
+                            let res = crate::interop::LIBRARYMANAGER.lock().unwrap().libraries.get_mut(source_value as usize).unwrap()
+                                .load_func(self.bus.memory.read_cstring(pointer)?, pointer as usize);
+                            if let Err(e) = res {
+                                panic!("CINTEROP: failed to load dynamic library function: {:?}", e);
+                            }
+                        }
+                    }
+                    _ => panic!("Attempting to use an immediate value as a destination"),
+                }
+                Some(self.instruction_pointer + instruction_pointer_offset)
+            }
         }
     }
 }
@@ -2839,6 +2989,10 @@ enum Instruction {
     Mcl(Condition),
     Tlb(Condition, Operand),
     Flp(Condition, Operand),
+
+    // C interop stuff
+    Ldl(Condition, Operand, Operand),
+    Bind(Condition, Operand, Operand),
 }
 
 impl Instruction {
@@ -2941,6 +3095,9 @@ impl Instruction {
             0x1D => Some(Instruction::Mcl(condition)),
             0x2D => Some(Instruction::Tlb(condition, source)),
             0x3D => Some(Instruction::Flp(condition, source)),
+
+            0x0E => Some(Instruction::Ldl(condition, destination, source)),
+            0x1E => Some(Instruction::Bind(condition, destination, source)),
 
             _ => None,
         }

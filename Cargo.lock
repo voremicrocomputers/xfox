@@ -871,6 +871,8 @@ dependencies = [
  "anyhow",
  "chrono",
  "image",
+ "lazy_static",
+ "libloading",
  "log",
  "pixels",
  "rfd",

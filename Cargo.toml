@@ -15,6 +15,8 @@ ringbuf = "0.2"
 rodio = "0.15.0"
 winit = "0.26"
 winit_input_helper = "0.11"
+libloading = "0.7"
+lazy_static = "1.4.0"
 
 [build-dependencies]
 anyhow = "1.0"

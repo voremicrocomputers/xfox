@@ -8,6 +8,8 @@
 	org 0xF0000000
 
 entry:
+	mse
+	tlb 0x00000000
 	mov rsp, 0x01FFF800
 	mov r0, string
 	call debug_print	
@@ -16,8 +18,7 @@ loop:
 	mov r3, 0
 	add r3, 4
 	div r3, 2
-	mov r4, 0x10000000
-	out r4, r3
+	mov [0x01000000], r3
 	add r1, 1
 	cmp r1, r2
 	ifz jmp loop_end

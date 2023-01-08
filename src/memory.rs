@@ -274,6 +274,21 @@ impl Memory {
         }
     }
 
+    pub fn read_cstring(&mut self, address: u32) -> Option<String> {
+        let mut read_ok = true;
+        let value = if in_rom_memory(address as usize) {
+                self.rom().read_cstring(address as usize - MEMORY_ROM_START)
+            } else {
+                self.ram().read_cstring(address as usize - MEMORY_RAM_START)
+            }.unwrap_or_else(|| { read_ok = false; String::new() });
+        if read_ok {
+            Some(value)
+        } else {
+            self.exception_sender().send(Exception::PageFaultRead(address)).unwrap();
+            None
+        }
+    }
+
     pub fn write_8(&mut self, mut address: u32, byte: u8) -> Option<()> {
         let original_address = address;
         let mut writable = true;
@@ -338,5 +353,20 @@ impl Memory {
         self.write_8(address + 2, ((word & 0x00FF0000) >> 16) as u8)?;
         self.write_8(address + 3, ((word & 0xFF000000) >> 24) as u8)?;
         Some(())
+    }
+
+    pub fn get_actual_pointer(&mut self, address: u32) -> Option<*mut u8> {
+        let mut read_ok = true;
+        let value = if in_rom_memory(address as usize) {
+            self.rom().get_irl_pointer(address as usize - MEMORY_ROM_START)
+        } else {
+            self.ram().get_irl_pointer(address as usize - MEMORY_RAM_START)
+        }.unwrap_or_else(|| { read_ok = false; std::ptr::null_mut::<u8>() });
+        if read_ok {
+            Some(value)
+        } else {
+            self.exception_sender().send(Exception::PageFaultRead(address)).unwrap();
+            None
+        }
     }
 }

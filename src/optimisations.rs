@@ -120,6 +120,22 @@ impl MemoryAreaPointer {
         }
     }
 
+    pub fn read_cstring(&self, offset: usize) -> Option<String> {
+        let mut vec = Vec::new();
+        unsafe {
+            let mut memory_ram = self.pointer.add(offset) as *mut u8;
+            for _ in 0..self.size {
+                let byte = *memory_ram;
+                if byte == 0 {
+                    break;
+                }
+                vec.push(byte);
+                memory_ram = memory_ram.offset(1);
+            }
+        }
+        Some(String::from_utf8(vec).unwrap())
+    }
+
     pub fn write_8(&self, offset: usize, value: u8) -> Result<(), MemoryAreaPointerError> {
         if offset > self.size {
             return Err(MemoryAreaPointerError::OutOfBounds);
@@ -131,6 +147,17 @@ impl MemoryAreaPointer {
         }
 
         Ok(())
+    }
+
+    pub fn get_irl_pointer(&self, offset: usize) -> Option<*mut u8> {
+        if offset > self.size {
+            return None;
+        }
+
+        unsafe {
+            let memory_ram = self.pointer;
+            Some(memory_ram.add(offset))
+        }
     }
 
     pub fn in_bounds(&self, offset: usize) -> bool {

@@ -7,6 +7,8 @@ pub mod cpu;
 pub mod keyboard;
 pub mod mouse;
 pub mod disk;
+pub mod interop;
+pub mod interop_cursed;
 pub mod optimisations;
 
 use audio::AudioChannel;
