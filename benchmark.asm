@@ -2,6 +2,7 @@
 ; set r0 to 0x0
 ; add 4 to r0
 ; divide by 2 on r0
+; write to memory
 ; loop that 1,000,000 times
 ; check how long execution took
 	org 0xF0000000
@@ -15,6 +16,8 @@ loop:
 	mov r3, 0
 	add r3, 4
 	div r3, 2
+	mov r4, 0x10000000
+	out r4, r3
 	add r1, 1
 	cmp r1, r2
 	ifz jmp loop_end
