@@ -10,7 +10,7 @@ use std::io::Write;
 use std::fs::File;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
-use crate::optimisations::MemoryAreaPointer;
+use crate::optimisations::{in_rom_memory, MemoryAreaPointer};
 
 pub const MEMORY_RAM_SIZE: usize = 0x04000000; // 64 MiB
 pub const MEMORY_ROM_SIZE: usize = 0x00080000; // 512 KiB
@@ -208,7 +208,7 @@ impl Memory {
 
         let address = address as usize;
 
-        if address >= MEMORY_ROM_START && address < MEMORY_ROM_START + MEMORY_ROM_SIZE {
+        if in_rom_memory(address) {
             let read = self.rom().read_8(address - MEMORY_ROM_START);
             read
         } else {
@@ -226,7 +226,7 @@ impl Memory {
 
         let address = address as usize;
 
-        if address >= MEMORY_ROM_START && address < MEMORY_ROM_START + MEMORY_ROM_SIZE {
+        if in_rom_memory(address) {
             let read = self.rom().read_16(address - MEMORY_ROM_START);
             read
         } else {
@@ -236,7 +236,7 @@ impl Memory {
     pub fn read_opt_32(&mut self, address: u32) -> Option<u32> {
         let address = address as usize;
 
-        if address >= MEMORY_ROM_START && address < MEMORY_ROM_START + MEMORY_ROM_SIZE {
+        if in_rom_memory(address) {
             self.rom().read_32(address - MEMORY_ROM_START)
         } else {
             self.ram().read_32(address - MEMORY_RAM_START)
@@ -286,7 +286,7 @@ impl Memory {
         if writable {
             let address = address as usize;
 
-            if address >= MEMORY_ROM_START && address < MEMORY_ROM_START + MEMORY_ROM_SIZE {
+            if in_rom_memory(address) {
                 error(&format!("attempting to write to ROM address: {:#010X}", address));
             }
 

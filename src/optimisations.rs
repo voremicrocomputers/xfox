@@ -140,3 +140,7 @@ impl MemoryAreaPointer {
         offset < self.size
     }
 }
+
+pub fn in_rom_memory(address: usize) -> bool {
+    address >= crate::memory::MEMORY_ROM_START
+}
