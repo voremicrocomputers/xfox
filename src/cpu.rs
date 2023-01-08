@@ -3,6 +3,7 @@
 // TODO: in the instruction match statement, all of the register ones have `let result` inside the if statement
 //       move this up to match all of the other ones (or move all of the other ones down, which would probably be better anyways)
 
+use std::sync::mpsc;
 use std::sync::mpsc::Receiver;
 
 use crate::Bus;
@@ -318,7 +319,7 @@ impl Cpu {
         self.instruction_pointer = address;
     }
     // execute instruction from memory at the current instruction pointer
-    pub fn execute_memory_instruction(&mut self) {
+    pub fn execute_memory_instruction(&mut self, exit_sender: mpsc::Sender<()>) {
         if let Some(vector) = self.next_exception {
             self.handle_exception(vector, self.next_exception_operand);
             self.next_exception = None;
@@ -333,6 +334,13 @@ impl Cpu {
                 self.handle_interrupt(vector);
                 self.next_interrupt = None;
             }
+        }
+
+        // if instruction pointer is 0x00000000, exit
+        if self.instruction_pointer == 0 {
+            if self.debug { println!("instruction pointer is 0x00000000, exiting"); }
+            exit_sender.send(()).unwrap();
+            return;
         }
 
         let opcode_maybe = self.bus.memory.read_16(self.instruction_pointer);
@@ -2371,6 +2379,9 @@ impl Cpu {
             }
             Instruction::Call(condition, source) => {
                 let (source_value, instruction_pointer_offset) = self.read_source(source)?;
+                if self.debug {
+                    println!("Calling {:08X}", source_value);
+                }
                 let should_run = self.check_condition(condition);
                 if should_run {
                     self.push_stack_32(self.instruction_pointer + instruction_pointer_offset);

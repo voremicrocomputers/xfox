@@ -21,6 +21,7 @@ use std::thread;
 use std::process::exit;
 use std::env;
 use std::fs::{File, read};
+use std::time::SystemTime;
 
 use chrono::prelude::*;
 use image;
@@ -53,12 +54,24 @@ pub struct Overlay {
 }
 
 fn read_rom() -> Vec<u8> {
-    read("fox32.rom").unwrap_or_else(|_| {
+    /*read("fox32.rom").unwrap_or_else(|_| {
         read("../fox32rom/fox32.rom").unwrap_or_else(|_| {
             println!("fox32.rom file not found, using embedded ROM");
             include_bytes!("fox32.rom").to_vec()
         })
-    })
+    })*/
+    // collect env args
+    let args = std::env::args().collect::<Vec<String>>();
+    // check if there's an input file
+    if args.len() < 2 {
+        panic!("No input file specified");
+    } else {
+        // read the file
+        println!("Reading file: {}", args[1]);
+        read(&args[1]).unwrap_or_else(|_| {
+            panic!("Input file not found");
+        })
+    }
 }
 
 pub fn error(message: &str) -> ! {
@@ -78,38 +91,13 @@ fn main() {
 
     let (debug_toggle_sender, debug_toggle_receiver) = mpsc::channel::<()>();
 
-    let mut display = Display::new();
-    let keyboard = Arc::new(Mutex::new(Keyboard::new(debug_toggle_sender)));
-    let mouse = Arc::new(Mutex::new(Mouse::new()));
-
-    let audio_channel_0 = Arc::new(Mutex::new(AudioChannel::new(0)));
-    let audio_channel_1 = Arc::new(Mutex::new(AudioChannel::new(1)));
-    let audio_channel_2 = Arc::new(Mutex::new(AudioChannel::new(2)));
-    let audio_channel_3 = Arc::new(Mutex::new(AudioChannel::new(3)));
-
     let (exception_sender, exception_receiver) = mpsc::channel::<Exception>();
 
     let memory = Memory::new(read_rom().as_slice(), exception_sender);
     let mut bus = Bus {
         memory: memory.clone(),
-        audio_channel_0: audio_channel_0.clone(),
-        audio_channel_1: audio_channel_1.clone(),
-        audio_channel_2: audio_channel_2.clone(),
-        audio_channel_3: audio_channel_3.clone(),
-        disk_controller: DiskController::new(),
-        keyboard: keyboard.clone(),
-        mouse: mouse.clone(),
-        overlays: display.overlays.clone(),
         startup_time: Local::now().timestamp_millis(),
     };
-
-    if args.len() > 1 {
-        let mut args_iter = args.iter();
-        args_iter.next();
-        for (i, arg) in args_iter.enumerate() {
-            bus.disk_controller.insert(File::options().read(true).write(true).open(&arg).expect("failed to load provided disk image"), i as u8);
-        }
-    }
 
     let memory_cpu = memory.clone();
     let memory_eventloop = memory.clone();
@@ -125,41 +113,18 @@ fn main() {
     println!("ROM: {:.2} KiB mapped at physical {:#010X}-{:#010X}", rom_size / 1024, rom_bottom_address, rom_top_address);
 
     let mut cpu = Cpu::new(bus, debug_toggle_receiver);
-
-    let event_loop = EventLoop::new();
-    let mut input = WinitInputHelper::new();
-    let icon = image::load_from_memory(include_bytes!("32.png")).unwrap();
-    let window = {
-        let size = LogicalSize::new(WIDTH as f64, HEIGHT as f64);
-        WindowBuilder::new()
-            .with_title(version_string)
-            .with_inner_size(size)
-            .with_min_inner_size(size)
-            .with_window_icon(Some(Icon::from_rgba(icon.as_bytes().to_vec(), 128, 128).unwrap()))
-            .build(&event_loop)
-            .unwrap()
-    };
-
-    window.set_cursor_visible(false);
-
-    let mut pixels = {
-        let window_size = window.inner_size();
-        let surface_texture = SurfaceTexture::new(window_size.width, window_size.height, &window);
-        Pixels::new(WIDTH as u32, HEIGHT as u32, surface_texture).unwrap()
-    };
+    //cpu.debug = true;
 
     let (interrupt_sender, interrupt_receiver) = mpsc::channel::<Interrupt>();
-    let (exit_sender, exit_receiver) = mpsc::channel::<bool>();
+    let (exit_sender, exit_receiver) = mpsc::channel::<()>();
 
-    AudioChannel::spawn_thread(audio_channel_0, interrupt_sender.clone(), memory.clone());
-    AudioChannel::spawn_thread(audio_channel_1, interrupt_sender.clone(), memory.clone());
-    AudioChannel::spawn_thread(audio_channel_2, interrupt_sender.clone(), memory.clone());
-    AudioChannel::spawn_thread(audio_channel_3, interrupt_sender.clone(), memory.clone());
-
-    let builder = thread::Builder::new().name("cpu".to_string());
-    builder.spawn({
-        move || {
+ //   let builder = thread::Builder::new().name("cpu".to_string());
+//    builder.spawn({
+//        move || {
+    let start_time = SystemTime::now();
+    let mut i = 0;
             loop {
+                // print cpu instruction pointer
                 while !cpu.halted {
                     if let Ok(exception) = exception_receiver.try_recv() {
                         (cpu.next_exception, cpu.next_exception_operand) = cpu.exception_to_vector(exception);
@@ -170,7 +135,8 @@ fn main() {
                             }
                         }
                     }
-                    cpu.execute_memory_instruction();
+                    cpu.execute_memory_instruction(exit_sender.clone());
+                    i += 1;
                     if let Ok(_) = exit_receiver.try_recv() {
                         // the rest of the VM has exited, stop the CPU thread
                         break;
@@ -196,78 +162,12 @@ fn main() {
                 }
             }
             println!("CPU halted");
-        }
-    }).unwrap();
+            let elapsed = start_time.elapsed().unwrap();
+            println!("CPU execution time: {}.{:03} seconds", elapsed.as_secs(), elapsed.subsec_millis());
+            println!("CPU executed {} instructions", i);
+    //    }
+//    }).unwrap();
 
-    event_loop.run(move |event, _, control_flow| {
-        *control_flow = ControlFlow::Poll;
-
-        // draw the current frame
-        if let Event::MainEventsCleared = event {
-            // update internal state and request a redraw
-
-            match interrupt_sender.send(Interrupt::Request(0xFF)) { // vsync interrupt
-                Ok(_) => {},
-                Err(_) => {
-                    *control_flow = ControlFlow::Exit;
-                    return;
-                }
-            };
-            display.update(memory_eventloop.clone().ram());
-            window.request_redraw();
-
-            display.draw(pixels.get_frame());
-            if pixels
-                .render()
-                .map_err(|e| error!("pixels.render() failed: {}", e))
-                .is_err()
-            {
-                *control_flow = ControlFlow::Exit;
-                return;
-            }
-        }
-
-        // handle input events
-        if let Event::WindowEvent { ref event, .. } = event {
-            if let WindowEvent::KeyboardInput { input, .. } = event {
-                let mut keyboard_lock = keyboard.lock().unwrap();
-                let keycode = input.virtual_keycode;
-                keyboard_lock.push(keycode, input.state);
-            }
-        }
-
-        if input.update(&event) {
-            // close events
-            if input.quit() {
-                exit_sender.send(true).unwrap();
-                *control_flow = ControlFlow::Exit;
-                return;
-            }
-
-            // resize the window
-            if let Some(size) = input.window_resized() {
-                pixels.resize_surface(size.width, size.height);
-            }
-
-            let mouse_pixel = input.mouse().map(|(mx, my)| {
-                let (x, y) = pixels.window_pos_to_pixel((mx, my)).unwrap_or_else(|pos| pixels.clamp_pixel_pos(pos));
-                (x as u16, y as u16)
-            }).unwrap_or_default();
-
-            // TODO: allow right click
-            let mut mouse_lock = mouse.lock().expect("failed to lock the mouse mutex");
-            mouse_lock.x = mouse_pixel.0;
-            mouse_lock.y = mouse_pixel.1;
-            if mouse_lock.held && !input.mouse_held(0) {
-                // mouse button was released this frame
-                mouse_lock.released = true;
-            }
-            mouse_lock.held = input.mouse_held(0);
-            if input.mouse_pressed(0) {
-                mouse_lock.clicked = true;
-            }
-        }
-    });
 }
 
 impl Display {
