@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::{Arc, Mutex};
 use lazy_static::lazy_static;
+use crate::interop_cursed;
 
 lazy_static!{
     pub static ref LIBRARYMANAGER: Arc<Mutex<LibraryManager>> = Arc::new(Mutex::new(LibraryManager::new()));
@@ -112,23 +113,37 @@ impl Library {
             Some(func) => {
                 let mut layout_expanded = Vec::new();
                 layout_expanded.extend_from_slice(arguments.as_slice());
-                if layout_expanded.len() < 8 {
-                    for _ in 0..(8 - layout_expanded.len()) {
-                        layout_expanded.push(Argument::u8(0));
-                    }
+                let layout_expanded = layout_expanded.iter().map(|x| x.v()).collect::<Vec<usize>>();
+                // is the number of arguments closer to 8, 16, 24, 63, or 127?
+                // todo! calculate this once and cache it
+                let mut closest = 8;
+                if (16 - layout_expanded.len()) < (closest - layout_expanded.len()) {
+                    closest = 16;
                 }
-                println!("{:?} {:?}", layout_expanded, arguments);
-                let func: extern "C" fn(_, ...) -> _ = unsafe { std::mem::transmute(func.inner) };
-                let result = unsafe { func(
-                    layout_expanded[0].v(),
-                    layout_expanded[1].v(),
-                    layout_expanded[2].v(),
-                    layout_expanded[3].v(),
-                    layout_expanded[4].v(),
-                    layout_expanded[5].v(),
-                    layout_expanded[6].v(),
-                    layout_expanded[7].v())
+                if (24 - layout_expanded.len()) < (closest - layout_expanded.len()) {
+                    closest = 24;
+                }
+                if (63 - layout_expanded.len()) < (closest - layout_expanded.len()) {
+                    closest = 63;
+                }
+                if (127 - layout_expanded.len()) < (closest - layout_expanded.len()) {
+                    closest = 127;
+                }
+                println!("DEBUG C FUNC: using {} arguments", closest);
+                let mut layout_final = Vec::new();
+                layout_final.extend_from_slice(layout_expanded.as_slice());
+                layout_final.extend_from_slice(&vec![0; closest - layout_expanded.len()]);
+                let result = match closest {
+                    8 => interop_cursed::call_func_with_8_args(func.inner, layout_final),
+                    16 => interop_cursed::call_func_with_16_args(func.inner, layout_final),
+                    24 => interop_cursed::call_func_with_24_args(func.inner, layout_final),
+                    63 => interop_cursed::call_func_with_63_args(func.inner, layout_final),
+                    127 => interop_cursed::call_func_with_127_args(func.inner, layout_final),
+                    _ => panic!("CINTEROP: invalid number of arguments"),
                 };
+                //println!("{:?} {:?}", layout_expanded, arguments);
+                //let func: extern "C" fn(_, ...) -> _ = unsafe { std::mem::transmute(func.inner) };
+                //let result = unsafe { func(&[layout_final]) };
                 println!("DEBUG C FUNC RESULT: {:?}", result);
                 Ok(result)
             },
