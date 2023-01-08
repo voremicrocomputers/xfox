@@ -3,10 +3,11 @@
 // TODO: in the instruction match statement, all of the register ones have `let result` inside the if statement
 //       move this up to match all of the other ones (or move all of the other ones down, which would probably be better anyways)
 
+use std::sync::atomic::Ordering;
 use std::sync::mpsc;
 use std::sync::mpsc::Receiver;
 
-use crate::Bus;
+use crate::{Bus, optimisations};
 
 #[derive(Copy, Clone)]
 pub struct Flag {
@@ -67,11 +68,10 @@ pub struct Cpu {
     pub next_exception_operand: Option<u32>,
 
     pub debug: bool,
-    debug_toggle_receiver: Receiver<()>,
 }
 
 impl Cpu {
-    pub fn new(bus: Bus, debug_toggle_receiver: Receiver<()>) -> Self {
+    pub fn new(bus: Bus) -> Self {
         Cpu {
             instruction_pointer: 0xF0000000,
             stack_pointer: 0x00000000,
@@ -86,7 +86,6 @@ impl Cpu {
             next_exception: None,
             next_exception_operand: None,
             debug: false,
-            debug_toggle_receiver,
         }
     }
     fn check_condition(&self, condition: Condition) -> bool {
@@ -260,15 +259,15 @@ impl Cpu {
         if self.debug { println!("interrupt!!! vector: {:#04X}", vector); }
         let address_of_pointer = vector as u32 * 4;
 
-        let old_mmu_state = *self.bus.memory.mmu_enabled();
-        *self.bus.memory.mmu_enabled() = false;
+        let old_mmu_state = self.bus.memory.read_mmu_enabled();
+        self.bus.memory.write_mmu_enabled(false);
         let address_maybe = self.bus.memory.read_32(address_of_pointer);
         if address_maybe == None {
-            *self.bus.memory.mmu_enabled() = old_mmu_state;
+            self.bus.memory.write_mmu_enabled(old_mmu_state);
             return;
         }
         let address = address_maybe.unwrap();
-        *self.bus.memory.mmu_enabled() = old_mmu_state;
+        self.bus.memory.write_mmu_enabled(old_mmu_state);
 
         if self.flag.swap_sp {
             let old_stack_pointer = self.stack_pointer;
@@ -289,15 +288,15 @@ impl Cpu {
         if self.debug { println!("exception!!! vector: {:#04X}, operand: {:?}", vector, operand); }
         let address_of_pointer = (256 + vector as u32) * 4;
 
-        let old_mmu_state = *self.bus.memory.mmu_enabled();
-        *self.bus.memory.mmu_enabled() = false;
+        let old_mmu_state = self.bus.memory.read_mmu_enabled();
+        self.bus.memory.write_mmu_enabled(false);
         let address_maybe = self.bus.memory.read_32(address_of_pointer);
         if address_maybe == None {
-            *self.bus.memory.mmu_enabled() = old_mmu_state;
+            self.bus.memory.write_mmu_enabled(old_mmu_state);
             return;
         }
         let address = address_maybe.unwrap();
-        *self.bus.memory.mmu_enabled() = old_mmu_state;
+        self.bus.memory.write_mmu_enabled(old_mmu_state);
 
         if self.flag.swap_sp {
             let old_stack_pointer = self.stack_pointer;
@@ -319,7 +318,7 @@ impl Cpu {
         self.instruction_pointer = address;
     }
     // execute instruction from memory at the current instruction pointer
-    pub fn execute_memory_instruction(&mut self, exit_sender: mpsc::Sender<()>) {
+    pub fn execute_memory_instruction(&mut self) -> bool {
         if let Some(vector) = self.next_exception {
             self.handle_exception(vector, self.next_exception_operand);
             self.next_exception = None;
@@ -339,13 +338,12 @@ impl Cpu {
         // if instruction pointer is 0x00000000, exit
         if self.instruction_pointer == 0 {
             if self.debug { println!("instruction pointer is 0x00000000, exiting"); }
-            exit_sender.send(()).unwrap();
-            return;
+            return false;
         }
 
         let opcode_maybe = self.bus.memory.read_16(self.instruction_pointer);
         if opcode_maybe == None {
-            return;
+            return true;
         }
         let opcode = opcode_maybe.unwrap();
 
@@ -355,8 +353,9 @@ impl Cpu {
             if let Some(next) = next_instruction_pointer {
                 self.instruction_pointer = next;
             }
-            if let Ok(_) = self.debug_toggle_receiver.try_recv() {
+            if unsafe { optimisations::DEBUG_TOGGLE.load(Ordering::Relaxed) } {
                 self.debug = !self.debug;
+                unsafe { optimisations::DEBUG_TOGGLE.store(false, Ordering::Relaxed); }
             }
         } else {
             let size = ((opcode & 0b1100000000000000) >> 14) as u8;
@@ -373,6 +372,7 @@ impl Cpu {
             self.bus.memory.dump();
             panic!("bad opcode");
         }
+        return true;
     }
     // execute one instruction and return the next instruction pointer value
     fn execute_instruction(&mut self, instruction: Instruction) -> Option<u32> {
@@ -2716,7 +2716,7 @@ impl Cpu {
                 let instruction_pointer_offset = 2; // increment past opcode half
                 let should_run = self.check_condition(condition);
                 if should_run {
-                    *self.bus.memory.mmu_enabled() = true;
+                    self.bus.memory.write_mmu_enabled(true);
                 }
                 Some(self.instruction_pointer + instruction_pointer_offset)
             }
@@ -2724,7 +2724,7 @@ impl Cpu {
                 let instruction_pointer_offset = 2; // increment past opcode half
                 let should_run = self.check_condition(condition);
                 if should_run {
-                    *self.bus.memory.mmu_enabled() = false;
+                    self.bus.memory.write_mmu_enabled(false);
                 }
                 Some(self.instruction_pointer + instruction_pointer_offset)
             }
@@ -2844,29 +2844,31 @@ enum Instruction {
 impl Instruction {
     fn from_half(half: u16) -> Option<Instruction> {
         // see encoding.md for more info
-        let size = match ((half >> 14) as u8) & 0b00000011 {
-            0x00 => Size::Byte,
-            0x01 => Size::Half,
-            0x02 => Size::Word,
+
+        // first two bits, 0b1100_0000_0000_0000
+        let size = match half & 0b1100_0000_0000_0000 {
+            0b0000_0000_0000_0000 => Size::Byte,
+            0b0100_0000_0000_0000 => Size::Half,
+            0b1000_0000_0000_0000 => Size::Word,
             _ => return None,
         };
         let opcode = ((half >> 8) as u8) & 0b00111111;
-        let source = match ((half & 0x000F) as u8) & 0b00000011 {
-            0x00 => Operand::Register,
-            0x01 => Operand::RegisterPtr(size),
-            0x02 => match size {
+        let source = match half & 0b0000_0000_0000_0011 {
+            0b0000_0000_0000_0000 => Operand::Register,
+            0b0000_0000_0000_0001 => Operand::RegisterPtr(size),
+            0b0000_0000_0000_0010 => match size {
                 Size::Byte => Operand::Immediate8,
                 Size::Half => Operand::Immediate16,
                 Size::Word => Operand::Immediate32,
             },
-            0x03 => Operand::ImmediatePtr(size),
+            0b0000_0000_0000_0011 => Operand::ImmediatePtr(size),
             _ => return None,
         };
-        let destination = match (((half & 0x000F) >> 2) as u8) & 0b00000011 {
-            0x00 => Operand::Register,
-            0x01 => Operand::RegisterPtr(size),
+        let destination = match half & 0b0000_0000_0000_1100 {
+            0b0000_0000_0000_0000 => Operand::Register,
+            0b0000_0000_0000_0100 => Operand::RegisterPtr(size),
             // 0x02 is invalid, can't use an immediate value as a destination
-            0x03 => Operand::ImmediatePtr(size),
+            0b0000_0000_0000_1100 => Operand::ImmediatePtr(size),
             _ => return None,
         };
         let condition = match (half & 0x00F0) as u8 {

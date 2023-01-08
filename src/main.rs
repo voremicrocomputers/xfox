@@ -7,6 +7,7 @@ pub mod cpu;
 pub mod keyboard;
 pub mod mouse;
 pub mod disk;
+pub mod optimisations;
 
 use audio::AudioChannel;
 use bus::Bus;
@@ -21,6 +22,7 @@ use std::thread;
 use std::process::exit;
 use std::env;
 use std::fs::{File, read};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::SystemTime;
 
 use chrono::prelude::*;
@@ -89,8 +91,6 @@ fn main() {
 
     let args: Vec<String> = env::args().collect();
 
-    let (debug_toggle_sender, debug_toggle_receiver) = mpsc::channel::<()>();
-
     let (exception_sender, exception_receiver) = mpsc::channel::<Exception>();
 
     let memory = Memory::new(read_rom().as_slice(), exception_sender);
@@ -102,78 +102,84 @@ fn main() {
     let memory_cpu = memory.clone();
     let memory_eventloop = memory.clone();
 
-    let ram_size = memory_cpu.ram().len();
+    let ram_size = memory_cpu.ram().size;
     let ram_bottom_address = MEMORY_RAM_START;
     let ram_top_address = ram_bottom_address + ram_size - 1;
     println!("RAM: {:.2} MiB mapped at physical {:#010X}-{:#010X}", ram_size / 1048576, ram_bottom_address, ram_top_address);
 
-    let rom_size = memory_cpu.rom().len();
+    let rom_size = memory_cpu.rom().size;
     let rom_bottom_address = MEMORY_ROM_START;
     let rom_top_address = rom_bottom_address + rom_size - 1;
     println!("ROM: {:.2} KiB mapped at physical {:#010X}-{:#010X}", rom_size / 1024, rom_bottom_address, rom_top_address);
 
-    let mut cpu = Cpu::new(bus, debug_toggle_receiver);
+    let mut cpu = Cpu::new(bus);
     //cpu.debug = true;
 
     let (interrupt_sender, interrupt_receiver) = mpsc::channel::<Interrupt>();
-    let (exit_sender, exit_receiver) = mpsc::channel::<()>();
 
- //   let builder = thread::Builder::new().name("cpu".to_string());
+    //   let builder = thread::Builder::new().name("cpu".to_string());
 //    builder.spawn({
 //        move || {
     let start_time = SystemTime::now();
     let mut i = 0;
-            loop {
-                // print cpu instruction pointer
-                while !cpu.halted {
-                    if let Ok(exception) = exception_receiver.try_recv() {
-                        (cpu.next_exception, cpu.next_exception_operand) = cpu.exception_to_vector(exception);
-                    } else {
-                        if let Ok(interrupt) = interrupt_receiver.try_recv() {
-                            if let Interrupt::Request(vector) = interrupt {
-                                cpu.next_interrupt = Some(vector);
-                            }
-                        }
-                    }
-                    cpu.execute_memory_instruction(exit_sender.clone());
-                    i += 1;
-                    if let Ok(_) = exit_receiver.try_recv() {
-                        // the rest of the VM has exited, stop the CPU thread
-                        break;
-                    }
+    let mut exit = false;
+    loop {
+        // print cpu instruction pointer
+        while !cpu.halted {
+            if unsafe { optimisations::EXCEPTION_TOGGLE.load(Ordering::Relaxed) } {
+                unsafe { optimisations::EXCEPTION_TOGGLE.store(false, Ordering::Relaxed) };
+                if let Ok(exception) = exception_receiver.try_recv() {
+                    (cpu.next_exception, cpu.next_exception_operand) = cpu.exception_to_vector(exception);
                 }
-                if let Ok(_) = exit_receiver.try_recv() {
-                    // the rest of the VM has exited, stop the CPU thread
-                    break;
-                }
-                if !cpu.flag.interrupt {
-                    // the cpu was halted and interrupts are disabled
-                    // at this point, the cpu is dead and cannot resume, break out of the loop
-                    break;
-                }
-                if let Ok(interrupt) = interrupt_receiver.recv() {
+            } else if unsafe { optimisations::INTERRUPT_TOGGLE.load(Ordering::Relaxed) } {
+                unsafe { optimisations::INTERRUPT_TOGGLE.store(false, Ordering::Relaxed) };
+                if let Ok(interrupt) = interrupt_receiver.try_recv() {
                     if let Interrupt::Request(vector) = interrupt {
                         cpu.next_interrupt = Some(vector);
-                        cpu.halted = false;
                     }
-                } else {
-                    // sender is closed, break
-                    break;
                 }
             }
-            println!("CPU halted");
-            let elapsed = start_time.elapsed().unwrap();
-            println!("CPU execution time: {}.{:03} seconds", elapsed.as_secs(), elapsed.subsec_millis());
-            println!("CPU executed {} instructions", i);
+            if !cpu.execute_memory_instruction() {
+                exit = true;
+            }
+            i += 1;
+            if exit {
+                // the rest of the VM has exited, stop the CPU thread
+                break;
+            }
+
+        }
+        if exit {
+            // the rest of the VM has exited, stop the CPU thread
+            break;
+        }
+        if !cpu.flag.interrupt {
+            // the cpu was halted and interrupts are disabled
+            // at this point, the cpu is dead and cannot resume, break out of the loop
+            break;
+        }
+        if let Ok(interrupt) = interrupt_receiver.recv() {
+            if let Interrupt::Request(vector) = interrupt {
+                cpu.next_interrupt = Some(vector);
+                cpu.halted = false;
+            }
+        } else {
+            // sender is closed, break
+            break;
+        }
+    }
+    println!("CPU halted");
+    let elapsed = start_time.elapsed().unwrap();
+    println!("CPU execution time: {}.{:03} seconds", elapsed.as_secs(), elapsed.subsec_millis());
+    println!("CPU executed {} instructions", i);
     //    }
 //    }).unwrap();
-
 }
 
 impl Display {
     fn new() -> Self {
         Self {
-            background: vec![0; (HEIGHT*WIDTH*4) as usize],
+            background: vec![0; (HEIGHT * WIDTH * 4) as usize],
             overlays: Arc::new(Mutex::new(vec![Overlay { enabled: false, width: 16, height: 16, x: 0, y: 0, framebuffer_pointer: 0 }; 32])),
         }
     }
@@ -181,7 +187,7 @@ impl Display {
     fn update(&mut self, ram: &MemoryRam) {
         let overlay_lock = self.overlays.lock().unwrap();
 
-        for i in 0..(HEIGHT*WIDTH*4) as usize {
+        for i in 0..(HEIGHT * WIDTH * 4) as usize {
             self.background[i] = ram[FRAMEBUFFER_ADDRESS + i];
         }
 
@@ -199,7 +205,7 @@ impl Display {
 
             let i = i * 4;
 
-            let slice = &self.background[i..i+4];
+            let slice = &self.background[i..i + 4];
             pixel.copy_from_slice(slice);
         }
     }
@@ -226,7 +232,7 @@ fn blit_overlay(framebuffer: &mut [u8], overlay: &Overlay, ram: &[u8]) {
         //println!("height: {}, difference: {}", height, difference);
     }
 
-    let overlay_framebuffer = &ram[(overlay.framebuffer_pointer as usize)..((overlay.framebuffer_pointer+((width as u32)*(height as u32))) as usize)];
+    let overlay_framebuffer = &ram[(overlay.framebuffer_pointer as usize)..((overlay.framebuffer_pointer + ((width as u32) * (height as u32))) as usize)];
 
     let mut overlay_framebuffer_index = 0;
     for y in 0..height {

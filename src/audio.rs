@@ -52,7 +52,7 @@ impl AudioChannel {
                     // every `sleep` number of ms, play what is in the audio buffer
                     let self_lock = this.lock().unwrap();
                     if self_lock.playing {
-                        let audio_buffer: Vec<i16> = memory.ram()[audio_buffer_address..audio_buffer_address+AUDIO_BUFFER_SIZE]
+                        let audio_buffer: Vec<i16> = memory.ram().export_area(audio_buffer_address, audio_buffer_address+AUDIO_BUFFER_SIZE).unwrap()
                                                     .to_vec()
                                                     .chunks_exact(2)
                                                     .map(|x| ((x[1] as i16) << 8) | x[0] as i16)
