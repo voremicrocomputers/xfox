@@ -113,7 +113,6 @@ fn main() {
     println!("ROM: {:.2} KiB mapped at physical {:#010X}-{:#010X}", rom_size / 1024, rom_bottom_address, rom_top_address);
 
     let mut cpu = Cpu::new(bus);
-    //cpu.debug = true;
 
     let (interrupt_sender, interrupt_receiver) = mpsc::channel::<Interrupt>();
 

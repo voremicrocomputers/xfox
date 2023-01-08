@@ -89,7 +89,7 @@ impl Memory {
     pub fn write_mmu_enabled(&self, value: bool) { self.mmu_enabled.store(value, Ordering::Relaxed); }
     pub fn tlb(&self) -> &mut HashMap<u32, MemoryPage> { &mut self.inner().tlb }
     pub fn paging_directory_address(&self) -> &mut u32 { &mut self.inner().paging_directory_address }
-    pub fn exception_sender(&self) -> Arc<Sender<Exception>> { unsafe { optimisations::EXCEPTION_TOGGLE.store(true, Ordering::Relaxed) }; self.inner().exception_sender.clone() }
+    pub fn exception_sender(&self) -> Arc<Sender<Exception>> { unsafe { optimisations::EXCEPTION_TOGGLE.store(true, Ordering::SeqCst) }; self.inner().exception_sender.clone() }
 
     pub fn dump(&self) {
         let mut file = File::create("memory.dump").expect("failed to open memory dump file");
@@ -295,6 +295,7 @@ impl Memory {
                     self.ram().write_8(address - MEMORY_RAM_START, byte).unwrap();
                 }
                 false => {
+                    println!("attempting to write to invalid address: {:#010X}", address);
                     self.exception_sender().send(Exception::PageFaultWrite(original_address)).unwrap();
                 }
             }

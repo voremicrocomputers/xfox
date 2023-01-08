@@ -121,7 +121,6 @@ impl MemoryAreaPointer {
     }
 
     pub fn write_8(&self, offset: usize, value: u8) -> Result<(), MemoryAreaPointerError> {
-
         if offset > self.size {
             return Err(MemoryAreaPointerError::OutOfBounds);
         }
