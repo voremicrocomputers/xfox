@@ -60,7 +60,7 @@ impl MemoryAreaPointer {
             let mut memory_ram = self.pointer;
             for _ in 0..self.size {
                 vec.push(*memory_ram);
-                memory_ram = memory_ram.offset(1);
+                memory_ram = memory_ram.add(1);
             }
         }
         Ok(vec)
@@ -73,7 +73,7 @@ impl MemoryAreaPointer {
 
         let mut vec = Vec::with_capacity(size);
         unsafe {
-            let mut memory_ram = self.pointer.offset(offset as isize) as *mut u8;
+            let mut memory_ram = self.pointer.add(offset) as *mut u8;
             for _ in 0..size {
                 vec.push(*memory_ram);
                 memory_ram = memory_ram.offset(1);
@@ -84,39 +84,38 @@ impl MemoryAreaPointer {
 
     pub fn read_8(&self, offset: usize) -> Option<u8> {
 
-        if offset > self.size {
-            println!("optim warn: read out of bounds");
-            return None;
-        }
+        //if offset > self.size {
+        //    println!("optim warn: read out of bounds");
+        //    return None;
+        //}
 
         unsafe {
-            let memory_ram = self.pointer.offset(offset as isize) as *mut u8;
+            let memory_ram = self.pointer.add(offset) as *mut u8;
             Some(*memory_ram)
         }
     }
 
     pub fn read_16(&self, offset: usize) -> Option<u16> {
 
-        if offset + 1 > self.size {
-            println!("optim warn: read out of bounds");
-            return None;
-        }
+        //if offset + 1 > self.size {
+        //    println!("optim warn: read out of bounds");
+        //    return None;
+        //}
 
         unsafe {
-            let memory_ram = self.pointer.offset(offset as isize) as *mut u16;
+            let memory_ram = self.pointer.add(offset) as *mut u16;
             Some(*memory_ram)
         }
     }
 
     pub fn read_32(&self, offset: usize) -> Option<u32> {
-
-        if offset + 4 > self.size {
-            println!("optim warn: read out of bounds");
-            return None;
-        }
+        //if offset + 4 > self.size {
+        //    println!("optim warn: read out of bounds");
+        //    return None;
+        //}
 
         unsafe {
-            let memory_ram = self.pointer.offset(offset as isize) as *mut u32;
+            let memory_ram = self.pointer.add(offset) as *mut u32;
             Some(*memory_ram)
         }
     }
@@ -129,7 +128,7 @@ impl MemoryAreaPointer {
 
         unsafe {
             let memory_ram = self.pointer;
-            *memory_ram.offset(offset as isize) = value;
+            *memory_ram.add(offset) = value;
         }
 
         Ok(())
