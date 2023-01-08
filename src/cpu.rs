@@ -2409,18 +2409,39 @@ impl Cpu {
                     let layout = &lib_man.libraries.get(*l).unwrap().functions.get(&(source_value as usize)).unwrap().layout;
                     let mut args = Vec::new();
                     for (i, arg) in layout.iter().enumerate() {
-                        match arg {
-                            Argument::u8(_) => {
-                                args.push(Argument::u8(self.register[i] as u8));
+                        // first 8 arguments are from registers r0-r7
+                        // any other arguments are from stack
+                        if i <= 7 {
+                            match arg {
+                                Argument::u8(_) => {
+                                    args.push(Argument::u8(self.register[i] as u8));
+                                }
+                                Argument::u16(_) => {
+                                    args.push(Argument::u16(self.register[i] as u16));
+                                }
+                                Argument::u32(_) => {
+                                    args.push(Argument::u32(self.register[i]));
+                                }
+                                Argument::ptr(_) => {
+                                    args.push(Argument::ptr(self.bus.memory.get_actual_pointer(self.register[i]).unwrap()));
+                                }
                             }
-                            Argument::u16(_) => {
-                                args.push(Argument::u16(self.register[i] as u16));
-                            }
-                            Argument::u32(_) => {
-                                args.push(Argument::u32(self.register[i]));
-                            }
-                            Argument::ptr(_) => {
-                                args.push(Argument::ptr(self.bus.memory.get_actual_pointer(self.register[i]).unwrap()));
+                        } else {
+                            // pop from stack
+                            match arg {
+                                Argument::u8(_) => {
+                                    args.push(Argument::u8(self.pop_stack_8()?));
+                                }
+                                Argument::u16(_) => {
+                                    args.push(Argument::u16(self.pop_stack_16()?));
+                                }
+                                Argument::u32(_) => {
+                                    args.push(Argument::u32(self.pop_stack_32()?));
+                                }
+                                Argument::ptr(_) => {
+                                    let word = self.pop_stack_32()?;
+                                    args.push(Argument::ptr(self.bus.memory.get_actual_pointer(word).unwrap()));
+                                }
                             }
                         }
                     }
