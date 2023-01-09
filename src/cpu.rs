@@ -75,7 +75,7 @@ pub struct Cpu {
     pub next_interrupt: Option<u8>,
     pub next_soft_interrupt: Option<u8>,
     pub next_exception: Option<u8>,
-    pub next_exception_operand: Option<usize>,
+    pub next_exception_operand: Option<u64>,
 
     pub debug: bool,
 }
@@ -362,7 +362,7 @@ impl Cpu {
         self.flag.interrupt = false; // prevent interrupts while already servicing an interrupt
         self.instruction_pointer = address;
     }
-    fn handle_exception(&mut self, vector: u8, operand: Option<usize>) {
+    fn handle_exception(&mut self, vector: u8, operand: Option<u64>) {
         if self.debug { println!("exception!!! vector: {:#04X}, operand: {:?}", vector, operand); }
         let address_of_pointer = (256 + vector as u64) * 4;
 
@@ -481,7 +481,7 @@ impl Cpu {
             Instruction::Add(size, condition, destination, source) => {
                 let (source_value, mut instruction_pointer_offset) = self.read_source(source)?;
                 if self.check_condition(condition) {
-                    cleanup::mdma_with_overflow(&mut self, &size, destination, &mut instruction_pointer_offset, source_value as u64, |a, b, bits| {
+                    cleanup::mdma_with_overflow(self, &size, destination, &mut instruction_pointer_offset, source_value as u64, |a, b, bits| {
                         match bits {
                             -1 => { let res = (a as usize).overflowing_add(b as usize); (res.0 as u64, res.1) },
                             8  => { let res = (a as u8).overflowing_add(b as u8); (res.0 as u64, res.1) },
@@ -497,7 +497,7 @@ impl Cpu {
             Instruction::Inc(size, condition, source) => {
                 let mut instruction_pointer_offset = 2; // increment past opcode half
                 if self.check_condition(condition) {
-                    cleanup::mdma_with_overflow(&mut self, &size, source, &mut instruction_pointer_offset, 1, |a, b, bits| {
+                    cleanup::mdma_with_overflow(self, &size, source, &mut instruction_pointer_offset, 1, |a, b, bits| {
                         match bits {
                             -1 => { let res = (a as usize).overflowing_add(b as usize); (res.0 as u64, res.1) },
                             8  => { let res = (a as u8).overflowing_add(b as u8); (res.0 as u64, res.1) },
@@ -513,7 +513,7 @@ impl Cpu {
             Instruction::Sub(size, condition, destination, source) => {
                 let (source_value, mut instruction_pointer_offset) = self.read_source(source)?;
                 if self.check_condition(condition) {
-                    cleanup::mdma_with_overflow(&mut self, &size, destination, &mut instruction_pointer_offset, source_value as u64, |a, b, bits| {
+                    cleanup::mdma_with_overflow(self, &size, destination, &mut instruction_pointer_offset, source_value as u64, |a, b, bits| {
                         match bits {
                             -1 => { let res = (a as usize).overflowing_sub(b as usize); (res.0 as u64, res.1) },
                             8  => { let res = (a as u8).overflowing_sub(b as u8); (res.0 as u64, res.1) },
@@ -529,7 +529,7 @@ impl Cpu {
             Instruction::Dec(size, condition, source) => {
                 let mut instruction_pointer_offset = 2; // increment past opcode half
                 if self.check_condition(condition) {
-                    cleanup::mdma_with_overflow(&mut self, &size, source, &mut instruction_pointer_offset, 1, |a, b, bits| {
+                    cleanup::mdma_with_overflow(self, &size, source, &mut instruction_pointer_offset, 1, |a, b, bits| {
                         match bits {
                             -1 => { let res = (a as usize).overflowing_sub(b as usize); (res.0 as u64, res.1) },
                             8  => { let res = (a as u8).overflowing_sub(b as u8); (res.0 as u64, res.1) },
@@ -545,7 +545,7 @@ impl Cpu {
             Instruction::Mul(size, condition, destination, source) => {
                 let (source_value, mut instruction_pointer_offset) = self.read_source(source)?;
                 if self.check_condition(condition) {
-                    cleanup::mdma_with_overflow(&mut self, &size, destination, &mut instruction_pointer_offset, source_value as u64, |a, b, bits| {
+                    cleanup::mdma_with_overflow(self, &size, destination, &mut instruction_pointer_offset, source_value as u64, |a, b, bits| {
                         match bits {
                             -1 => { let res = (a as usize).overflowing_mul(b as usize); (res.0 as u64, res.1) },
                             8  => { let res = (a as u8).overflowing_mul(b as u8); (res.0 as u64, res.1) },
@@ -561,7 +561,7 @@ impl Cpu {
             Instruction::Div(size, condition, destination, source) => {
                 let (source_value, mut instruction_pointer_offset) = self.read_source(source)?;
                 if self.check_condition(condition) {
-                    cleanup::mdma_with_overflow(&mut self, &size, destination, &mut instruction_pointer_offset, source_value as u64, |a, b, bits| {
+                    cleanup::mdma_with_overflow(self, &size, destination, &mut instruction_pointer_offset, source_value as u64, |a, b, bits| {
                         match bits {
                             -1 => { let res = (a as usize).overflowing_mul(b as usize); (res.0 as u64, res.1) },
                             8  => { let res = (a as u8).overflowing_mul(b as u8); (res.0 as u64, res.1) },
@@ -577,7 +577,7 @@ impl Cpu {
             Instruction::Rem(size, condition, destination, source) => {
                 let (source_value, mut instruction_pointer_offset) = self.read_source(source)?;
                 if self.check_condition(condition) {
-                    cleanup::mdma_with_overflow(&mut self, &size, destination, &mut instruction_pointer_offset, source_value as u64, |a, b, bits| {
+                    cleanup::mdma_with_overflow(self, &size, destination, &mut instruction_pointer_offset, source_value as u64, |a, b, bits| {
                         match bits {
                             -1 => { let res = (a as usize) % (b as usize); (res as u64, false) },
                             8  => { let res = (a as u8) % (b as u8); (res as u64, false) },
@@ -594,7 +594,7 @@ impl Cpu {
             Instruction::And(size, condition, destination, source) => {
                 let (source_value, mut instruction_pointer_offset) = self.read_source(source)?;
                 if self.check_condition(condition) {
-                    cleanup::mdma_with_overflow(&mut self, &size, destination, &mut instruction_pointer_offset, source_value as u64, |a, b, bits| {
+                    cleanup::mdma_with_overflow(self, &size, destination, &mut instruction_pointer_offset, source_value as u64, |a, b, bits| {
                         match bits {
                             -1 => { let res = (a as usize) & (b as usize); (res as u64, false) },
                             8  => { let res = (a as u8) & (b as u8); (res as u64, false) },
@@ -610,7 +610,7 @@ impl Cpu {
             Instruction::Or(size, condition, destination, source) => {
                 let (source_value, mut instruction_pointer_offset) = self.read_source(source)?;
                 if self.check_condition(condition) {
-                    cleanup::mdma_with_overflow(&mut self, &size, destination, &mut instruction_pointer_offset, source_value as u64, |a, b, bits| {
+                    cleanup::mdma_with_overflow(self, &size, destination, &mut instruction_pointer_offset, source_value as u64, |a, b, bits| {
                         match bits {
                             -1 => { let res = (a as usize) | (b as usize); (res as u64, false) },
                             8  => { let res = (a as u8) | (b as u8); (res as u64, false) },
@@ -626,7 +626,7 @@ impl Cpu {
             Instruction::Xor(size, condition, destination, source) => {
                 let (source_value, mut instruction_pointer_offset) = self.read_source(source)?;
                 if self.check_condition(condition) {
-                    cleanup::mdma_with_overflow(&mut self, &size, destination, &mut instruction_pointer_offset, source_value as u64, |a, b, bits| {
+                    cleanup::mdma_with_overflow(self, &size, destination, &mut instruction_pointer_offset, source_value as u64, |a, b, bits| {
                         match bits {
                             -1 => { let res = (a as usize) ^ (b as usize); (res as u64, false) },
                             8  => { let res = (a as u8) ^ (b as u8); (res as u64, false) },
@@ -642,7 +642,7 @@ impl Cpu {
             Instruction::Not(size, condition, source) => {
                 let mut instruction_pointer_offset = 2; // increment past opcode half
                 if self.check_condition(condition) {
-                    cleanup::mdma_with_overflow(&mut self, &size, source, &mut instruction_pointer_offset, 0, |a, b, bits| {
+                    cleanup::mdma_with_overflow(self, &size, source, &mut instruction_pointer_offset, 0, |a, b, bits| {
                         match bits {
                             -1 => { let res = !(a as usize); (res as u64, false) },
                             8  => { let res = !(a as u8); (res as u64, false) },
@@ -658,7 +658,7 @@ impl Cpu {
             Instruction::Sla(size, condition, destination, source) => {
                 let (source_value, mut instruction_pointer_offset) = self.read_source(source)?;
                 if self.check_condition(condition) {
-                    cleanup::mdma_with_overflow(&mut self, &size, destination, &mut instruction_pointer_offset, source_value as u64, |a, b, bits| {
+                    cleanup::mdma_with_overflow(self, &size, destination, &mut instruction_pointer_offset, source_value as u64, |a, b, bits| {
                         match bits {
                             -1 => { let res = (a as usize) << (b as usize); (res as u64, a & (1 << (usize::BITS - 1)) != 0) },
                             8  => { let res = (a as u8) << (b as u8); (res as u64, a & (1 << 7) != 0) },
@@ -674,7 +674,7 @@ impl Cpu {
             Instruction::Sra(size, condition, destination, source) => {
                 let (source_value, mut instruction_pointer_offset) = self.read_source(source)?;
                 if self.check_condition(condition) {
-                    cleanup::mdma_with_overflow(&mut self, &size, destination, &mut instruction_pointer_offset, source_value as u64, |a, b, bits| {
+                    cleanup::mdma_with_overflow(self, &size, destination, &mut instruction_pointer_offset, source_value as u64, |a, b, bits| {
                         match bits {
                             -1 => { let res = (a as usize) >> (b as usize); (res as u64, a & (1 << 0) != 0) },
                             8  => { let res = (a as u8) >> (b as u8); (res as u64, a & (1 << 0) != 0) },
@@ -690,7 +690,7 @@ impl Cpu {
             Instruction::Srl(size, condition, destination, source) => { // i love dj s3rl!
                 let (source_value, mut instruction_pointer_offset) = self.read_source(source)?;
                 if self.check_condition(condition) {
-                    cleanup::mdma_with_overflow(&mut self, &size, destination, &mut instruction_pointer_offset, source_value as u64, |a, b, bits| {
+                    cleanup::mdma_with_overflow(self, &size, destination, &mut instruction_pointer_offset, source_value as u64, |a, b, bits| {
                         match bits {
                             -1 => { let res = (a as usize) >> (b as usize); (res as u64 & { if usize::BITS == 64 { 0x7FFF_FFFF_FFFF_FFFF } else { 0x7FFF_FFFF } }, a & (1 << 0) != 0) },
                             8  => { let res = (a as u8) >> (b as u8); (res as u64 & 0x7F, a & (1 << 0) != 0) },
@@ -706,7 +706,7 @@ impl Cpu {
             Instruction::Rol(size, condition, destination, source) => {
                 let (source_value, mut instruction_pointer_offset) = self.read_source(source)?;
                 if self.check_condition(condition) {
-                    cleanup::mdma_with_overflow(&mut self, &size, destination, &mut instruction_pointer_offset, source_value as u64, |a, b, bits| {
+                    cleanup::mdma_with_overflow(self, &size, destination, &mut instruction_pointer_offset, source_value as u64, |a, b, bits| {
                         match bits {
                             -1 => { let res = (a as usize).rotate_left(b as u32); (res as u64, a & (1 << (usize::BITS - 1)) != 0) },
                             8  => { let res = (a as u8).rotate_left(b as u32); (res as u64, a & (1 << 7) != 0) },
@@ -722,7 +722,7 @@ impl Cpu {
             Instruction::Ror(size, condition, destination, source) => {
                 let (source_value, mut instruction_pointer_offset) = self.read_source(source)?;
                 if self.check_condition(condition) {
-                    cleanup::mdma_with_overflow(&mut self, &size, destination, &mut instruction_pointer_offset, source_value as u64, |a, b, bits| {
+                    cleanup::mdma_with_overflow(self, &size, destination, &mut instruction_pointer_offset, source_value as u64, |a, b, bits| {
                         match bits {
                             -1 => { let res = (a as usize).rotate_right(b as u32); (res as u64, a & (1 << 0) != 0) },
                             8  => { let res = (a as u8).rotate_right(b as u32); (res as u64, a & (1 << 0) != 0) },
@@ -2095,6 +2095,7 @@ impl Instruction {
             0b0000_0000_0000_0000 => Size::Byte,
             0b0100_0000_0000_0000 => Size::Half,
             0b1000_0000_0000_0000 => Size::Word,
+            0b1100_0000_0000_0000 => Size::Long,
             _ => return None,
         };
         let opcode = ((half >> 8) as u8) & 0b00111111;

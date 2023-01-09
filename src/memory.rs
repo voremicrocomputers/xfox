@@ -301,35 +301,35 @@ impl Memory {
     }
 
     pub fn write_real_8(&mut self, address: usize, value: u8) -> Option<()> {
-        let ptr = unsafe { Box::from_raw(address as *mut u8) };
+        let mut ptr = unsafe { Box::from_raw(address as *mut u8) };
         *ptr = value;
         Box::into_raw(ptr);
         Some(())
     }
 
     pub fn write_real_16(&mut self, address: usize, value: u16) -> Option<()> {
-        let ptr = unsafe { Box::from_raw(address as *mut u16) };
+        let mut ptr = unsafe { Box::from_raw(address as *mut u16) };
         *ptr = value;
         Box::into_raw(ptr);
         Some(())
     }
 
     pub fn write_real_32(&mut self, address: usize, value: u32) -> Option<()> {
-        let ptr = unsafe { Box::from_raw(address as *mut u32) };
+        let mut ptr = unsafe { Box::from_raw(address as *mut u32) };
         *ptr = value;
         Box::into_raw(ptr);
         Some(())
     }
 
     pub fn write_real_64(&mut self, address: usize, value: u64) -> Option<()> {
-        let ptr = unsafe { Box::from_raw(address as *mut u64) };
+        let mut ptr = unsafe { Box::from_raw(address as *mut u64) };
         *ptr = value;
         Box::into_raw(ptr);
         Some(())
     }
 
     pub fn write_real_usize(&mut self, address: usize, value: usize) -> Option<()> {
-        let ptr = unsafe { Box::from_raw(address as *mut usize) };
+        let mut ptr = unsafe { Box::from_raw(address as *mut usize) };
         *ptr = value;
         Box::into_raw(ptr);
         Some(())
