@@ -120,6 +120,30 @@ impl MemoryAreaPointer {
         }
     }
 
+    pub fn read_64(&self, offset: usize) -> Option<u64> {
+        //if offset + 8 > self.size {
+        //    println!("optim warn: read out of bounds");
+        //    return None;
+        //}
+
+        unsafe {
+            let memory_ram = self.pointer.add(offset) as *mut u64;
+            Some(*memory_ram)
+        }
+    }
+
+    pub fn read_usize(&self, offset: usize) -> Option<usize> {
+        //if offset + 4 > self.size {
+        //    println!("optim warn: read out of bounds");
+        //    return None;
+        //}
+
+        unsafe {
+            let memory_ram = self.pointer.add(offset) as *mut usize;
+            Some(*memory_ram)
+        }
+    }
+
     pub fn read_cstring(&self, offset: usize) -> Option<String> {
         let mut vec = Vec::new();
         unsafe {

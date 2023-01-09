@@ -19,6 +19,8 @@ pub enum Argument {
     u8(u8),
     u16(u16),
     u32(u32),
+    u64(u64),
+    usize(usize),
     ptr(*mut u8),
 }
 
@@ -28,6 +30,8 @@ impl Argument {
             Argument::u8(v) => *v as usize,
             Argument::u16(v) => *v as usize,
             Argument::u32(v) => *v as usize,
+            Argument::u64(v) => *v as usize,
+            Argument::usize(v) => *v,
             Argument::ptr(v) => *v as usize,
         }
     }
@@ -81,6 +85,8 @@ impl Library {
                 layout_vec.push(Argument::u32(0));
             } else if arg == &"ptr" {
                 layout_vec.push(Argument::ptr(0 as *mut u8));
+            } else if arg == &"" {
+                    break;
             } else {
                 return Err(LibraryError::FunctionNotFound);
             }
@@ -164,7 +170,7 @@ impl LibraryManager {
         if self.libraries.iter().any(|lib| lib.name == name) {
             return Err(LibraryError::LibraryAlreadyExists);
         }
-        let full_name = if name.contains(".so") || name.contains(".dll") { // todo: this may need to be changed for further compatibility
+        let full_name = if name.contains(".so") || name.contains(".dll") || name.contains(".a") { // todo: this may need to be changed for further compatibility
             name.clone()
         } else {
             format!("{}.{}", name.clone(), if std::env::consts::OS == "windows" { "dll" } else { "so" })
