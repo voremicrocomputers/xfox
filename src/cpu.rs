@@ -121,59 +121,59 @@ impl Cpu {
         let mut pointer = false;
         let source_value = match source {
             Operand::Register => {
-                let register = self.bus.memory.read_8((self.instruction_pointer + instruction_pointer_offset) as u64)?;
+                let register = self.bus.memory.read_8_bypass((self.instruction_pointer + instruction_pointer_offset) as u64)?;
                 let value = self.read_register(register);
                 instruction_pointer_offset += 1; // increment past 8 bit register number
                 value
             }
             Operand::RegisterPtr(size) => {
                 pointer = true;
-                let register = self.bus.memory.read_8((self.instruction_pointer + instruction_pointer_offset) as u64)?;
+                let register = self.bus.memory.read_8_bypass((self.instruction_pointer + instruction_pointer_offset) as u64)?;
                 let pointer = self.read_register(register);
                 let value = match size {
-                    Size::Byte => self.bus.memory.read_8(pointer as u64)? as usize,
-                    Size::Half => self.bus.memory.read_16(pointer as u64)? as usize,
-                    Size::Word => self.bus.memory.read_32(pointer as u64)? as usize,
-                    Size::Long => self.bus.memory.read_64(pointer as u64)? as usize,
-                    Size::System => self.bus.memory.read_usize(pointer as u64)? as usize,
+                    Size::Byte => self.bus.memory.read_8_bypass(pointer as u64)? as usize,
+                    Size::Half => self.bus.memory.read_16_bypass(pointer as u64)? as usize,
+                    Size::Word => self.bus.memory.read_32_bypass(pointer as u64)? as usize,
+                    Size::Long => self.bus.memory.read_64_bypass(pointer as u64)? as usize,
+                    Size::System => self.bus.memory.read_usize_bypass(pointer as u64)? as usize,
                 };
                 instruction_pointer_offset += 1; // increment past 8 bit register number
                 value as u64
             }
             Operand::Immediate8 => {
-                let value = self.bus.memory.read_8((self.instruction_pointer + instruction_pointer_offset) as u64)?;
+                let value = self.bus.memory.read_8_bypass((self.instruction_pointer + instruction_pointer_offset) as u64)?;
                 instruction_pointer_offset += 1; // increment past 8 bit immediate
                 value as u64
             }
             Operand::Immediate16 => {
-                let value = self.bus.memory.read_16((self.instruction_pointer + instruction_pointer_offset) as u64)?;
+                let value = self.bus.memory.read_16_bypass((self.instruction_pointer + instruction_pointer_offset) as u64)?;
                 instruction_pointer_offset += 2; // increment past 16 bit immediate
                 value as u64
             }
             Operand::Immediate32 => {
-                let value = self.bus.memory.read_32((self.instruction_pointer + instruction_pointer_offset) as u64)?;
+                let value = self.bus.memory.read_32_bypass((self.instruction_pointer + instruction_pointer_offset) as u64)?;
                 instruction_pointer_offset += 4; // increment past 32 bit immediate
                 value as u64
             }
             Operand::Immediate64 => {
-                let value = self.bus.memory.read_64((self.instruction_pointer + instruction_pointer_offset) as u64)?;
+                let value = self.bus.memory.read_64_bypass((self.instruction_pointer + instruction_pointer_offset) as u64)?;
                 instruction_pointer_offset += 8; // increment past 32 bit immediate
                 value as u64
             }
             Operand::Immediate64Fit => {
-                let value = self.bus.memory.read_usize((self.instruction_pointer + instruction_pointer_offset) as u64)? as u64;
+                let value = self.bus.memory.read_usize_bypass((self.instruction_pointer + instruction_pointer_offset) as u64)? as u64;
                 instruction_pointer_offset += 8; // increment past 32 bit immediate
                 value as u64
             }
             Operand::ImmediatePtr(size) => {
                 pointer = true;
-                let pointer = self.bus.memory.read_64((self.instruction_pointer + instruction_pointer_offset) as u64)?;
+                let pointer = self.bus.memory.read_64_bypass((self.instruction_pointer + instruction_pointer_offset) as u64)?;
                 let value = match size {
-                    Size::Byte => self.bus.memory.read_8(pointer as u64)? as usize,
-                    Size::Half => self.bus.memory.read_16(pointer as u64)? as usize,
-                    Size::Word => self.bus.memory.read_32(pointer as u64)? as usize,
-                    Size::Long => self.bus.memory.read_64(pointer as u64)? as usize,
-                    Size::System => self.bus.memory.read_usize(pointer as u64)? as usize,
+                    Size::Byte => self.bus.memory.read_8_bypass(pointer as u64)? as usize,
+                    Size::Half => self.bus.memory.read_16_bypass(pointer as u64)? as usize,
+                    Size::Word => self.bus.memory.read_32_bypass(pointer as u64)? as usize,
+                    Size::Long => self.bus.memory.read_64_bypass(pointer as u64)? as usize,
+                    Size::System => self.bus.memory.read_usize_bypass(pointer as u64)? as usize,
                 };
                 instruction_pointer_offset += 8; // increment past 32 bit pointer
                 value as u64
@@ -234,12 +234,12 @@ impl Cpu {
     }
     pub fn push_stack_8(&mut self, byte: u8) {
         let decremented_stack_pointer = self.stack_pointer.overflowing_sub(1);
-        if let Some(_) = self.bus.memory.write_8(decremented_stack_pointer.0 as u64, byte) {
+        if let Some(_) = self.bus.memory.write_8_bypass(decremented_stack_pointer.0 as u64, byte) {
             self.stack_pointer = decremented_stack_pointer.0;
         }
     }
     pub fn pop_stack_8(&mut self) -> Option<u8> {
-        let byte = self.bus.memory.read_8(self.stack_pointer as u64);
+        let byte = self.bus.memory.read_8_bypass(self.stack_pointer as u64);
         match byte {
             Some(byte) => {
                 let incremented_stack_pointer = self.stack_pointer.overflowing_add(1);
@@ -251,12 +251,12 @@ impl Cpu {
     }
     pub fn push_stack_16(&mut self, half: u16) {
         let decremented_stack_pointer = self.stack_pointer.overflowing_sub(2);
-        if let Some(_) = self.bus.memory.write_16(decremented_stack_pointer.0 as u64, half) {
+        if let Some(_) = self.bus.memory.write_16_bypass(decremented_stack_pointer.0 as u64, half) {
             self.stack_pointer = decremented_stack_pointer.0;
         }
     }
     pub fn pop_stack_16(&mut self) -> Option<u16> {
-        let half = self.bus.memory.read_16(self.stack_pointer as u64);
+        let half = self.bus.memory.read_16_bypass(self.stack_pointer as u64);
         match half {
             Some(half) => {
                 let incremented_stack_pointer = self.stack_pointer.overflowing_add(2);
@@ -268,24 +268,24 @@ impl Cpu {
     }
     pub fn push_stack_32(&mut self, word: u32) {
         let decremented_stack_pointer = self.stack_pointer.overflowing_sub(4);
-        if let Some(_) = self.bus.memory.write_32(decremented_stack_pointer.0 as u64, word) {
+        if let Some(_) = self.bus.memory.write_32_bypass(decremented_stack_pointer.0 as u64, word) {
             self.stack_pointer = decremented_stack_pointer.0;
         }
     }
     pub fn push_stack_64(&mut self, word: u64) {
         let decremented_stack_pointer = self.stack_pointer.overflowing_sub(8);
-        if let Some(_) = self.bus.memory.write_64(decremented_stack_pointer.0 as u64, word) {
+        if let Some(_) = self.bus.memory.write_64_bypass(decremented_stack_pointer.0 as u64, word) {
             self.stack_pointer = decremented_stack_pointer.0;
         }
     }
     pub fn push_stack_usize(&mut self, word: usize) {
         let decremented_stack_pointer = self.stack_pointer.overflowing_sub(if cfg!(target_pointer_width = "32") { 4 } else { 8 });
-        if let Some(_) = self.bus.memory.write_usize(decremented_stack_pointer.0 as u64, word) {
+        if let Some(_) = self.bus.memory.write_usize_bypass(decremented_stack_pointer.0 as u64, word) {
             self.stack_pointer = decremented_stack_pointer.0;
         }
     }
     pub fn pop_stack_32(&mut self) -> Option<u32> {
-        let word = self.bus.memory.read_32(self.stack_pointer as u64);
+        let word = self.bus.memory.read_32_bypass(self.stack_pointer as u64);
         match word {
             Some(word) => {
                 let incremented_stack_pointer = self.stack_pointer.overflowing_add(4);
@@ -296,7 +296,7 @@ impl Cpu {
         }
     }
     pub fn pop_stack_64(&mut self) -> Option<u64> {
-        let word = self.bus.memory.read_64(self.stack_pointer);
+        let word = self.bus.memory.read_64_bypass(self.stack_pointer);
         match word {
             Some(word) => {
                 let incremented_stack_pointer = self.stack_pointer.overflowing_add(8);
@@ -307,7 +307,7 @@ impl Cpu {
         }
     }
     pub fn pop_stack_usize(&mut self) -> Option<usize> {
-        let word = self.bus.memory.read_usize(self.stack_pointer);
+        let word = self.bus.memory.read_usize_bypass(self.stack_pointer);
         match word {
             Some(word) => {
                 let incremented_stack_pointer = self.stack_pointer.overflowing_add(if cfg!(target_pointer_width = "32") { 4 } else { 8 });
@@ -339,7 +339,7 @@ impl Cpu {
 
         let old_mmu_state = self.bus.memory.read_mmu_enabled();
         self.bus.memory.write_mmu_enabled(false);
-        let address_maybe = self.bus.memory.read_64(address_of_pointer);
+        let address_maybe = self.bus.memory.read_64_bypass(address_of_pointer);
         if address_maybe == None {
             self.bus.memory.write_mmu_enabled(old_mmu_state);
             return;
@@ -368,7 +368,7 @@ impl Cpu {
 
         let old_mmu_state = self.bus.memory.read_mmu_enabled();
         self.bus.memory.write_mmu_enabled(false);
-        let address_maybe = self.bus.memory.read_usize(address_of_pointer);
+        let address_maybe = self.bus.memory.read_usize_bypass(address_of_pointer);
         if address_maybe == None {
             self.bus.memory.write_mmu_enabled(old_mmu_state);
             return;
@@ -419,7 +419,7 @@ impl Cpu {
             return false;
         }
 
-        let opcode_maybe = self.bus.memory.read_16(self.instruction_pointer);
+        let opcode_maybe = self.bus.memory.read_16_bypass(self.instruction_pointer);
         if opcode_maybe == None {
             return true;
         }
@@ -1970,14 +1970,14 @@ impl Cpu {
                 if should_run {
                     self.flag.real_mode.store(true, Ordering::SeqCst);
                 }
-                Some(self.instruction_pointer + 1)
+                Some(self.instruction_pointer + 2)
             }
             Instruction::Rcl(condition) => {
                 let should_run = self.check_condition(condition);
                 if should_run {
                     self.flag.real_mode.store(false, Ordering::SeqCst);
                 }
-                Some(self.instruction_pointer + 1)
+                Some(self.instruction_pointer + 2)
             }
         }
     }
@@ -2192,6 +2192,8 @@ impl Instruction {
 
             0x0E => Some(Instruction::Ldl(condition, destination, source)),
             0x1E => Some(Instruction::Bind(condition, destination, source)),
+            0x2E => Some(Instruction::Rse(condition)),
+            0x3E => Some(Instruction::Rcl(condition)),
 
             _ => None,
         }

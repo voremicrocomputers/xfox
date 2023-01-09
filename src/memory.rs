@@ -446,6 +446,93 @@ impl Memory {
         }
     }
 
+    pub fn read_8_bypass(&mut self, address: u64) -> Option<u8> {
+        let mut read_ok = true;
+        let value = self.read_opt_8(address as usize).unwrap_or_else(|| {
+            read_ok = false;
+            0
+        });
+        if read_ok {
+            Some(value)
+        } else {
+            self.exception_sender().send(Exception::PageFaultRead(address)).unwrap();
+            None
+        }
+    }
+    pub fn read_16_bypass(&mut self, address: u64) -> Option<u16> {
+        let mut read_ok = true;
+        let value = self.read_opt_16(address as usize).unwrap_or_else(|| {
+            read_ok = false;
+            0
+        });
+        if read_ok {
+            Some(value)
+        } else {
+            self.exception_sender().send(Exception::PageFaultRead(address)).unwrap();
+            None
+        }
+    }
+    pub fn read_32_bypass(&mut self, address: u64) -> Option<u32> {
+        let mut read_ok = true;
+        let value = self.read_opt_32(address as usize).unwrap_or_else(|| {
+            read_ok = false;
+            0
+        });
+        if read_ok {
+            Some(value)
+        } else {
+            self.exception_sender().send(Exception::PageFaultRead(address)).unwrap();
+            None
+        }
+    }
+
+
+    pub fn read_64_bypass(&mut self, address: u64) -> Option<u64> {
+        let mut read_ok = true;
+        let value = self.read_opt_64(address as usize).unwrap_or_else(|| {
+            read_ok = false;
+            0
+        });
+        if read_ok {
+            Some(value)
+        } else {
+            self.exception_sender().send(Exception::PageFaultRead(address)).unwrap();
+            None
+        }
+    }
+
+    pub fn read_usize_bypass(&mut self, address: u64) -> Option<usize> {
+        let mut read_ok = true;
+        let value = self.read_opt_usize(address as usize).unwrap_or_else(|| {
+            read_ok = false;
+            0
+        });
+        if read_ok {
+            Some(value)
+        } else {
+            self.exception_sender().send(Exception::PageFaultRead(address)).unwrap();
+            None
+        }
+    }
+
+    pub fn read_cstring_bypass(&mut self, address: u64) -> Option<String> {
+        let mut read_ok = true;
+        let value = if in_rom_memory(address as usize) {
+            self.rom().read_cstring(address as usize - MEMORY_ROM_START)
+        } else {
+            self.ram().read_cstring(address as usize - MEMORY_RAM_START)
+        }.unwrap_or_else(|| {
+            read_ok = false;
+            String::new()
+        });
+        if read_ok {
+            Some(value)
+        } else {
+            self.exception_sender().send(Exception::PageFaultRead(address)).unwrap();
+            None
+        }
+    }
+
     pub fn write_8(&mut self, mut address: u64, byte: u8) -> Option<()> {
         if cpu::REAL_MODE_FLAG.load(Ordering::Relaxed) {
             self.write_real_8(address as usize, byte)
@@ -615,6 +702,157 @@ impl Memory {
             }
             Some(())
         }
+    }
+
+    pub fn write_8_bypass(&mut self, mut address: u64, byte: u8) -> Option<()> {
+        let original_address = address;
+        let mut writable = true;
+        if self.read_mmu_enabled() {
+            (address, writable) = self.virtual_to_physical(address).unwrap_or_else(|| {
+                (0, false)
+            });
+        }
+
+        if writable {
+            let address = address as usize;
+
+            if in_rom_memory(address) {
+                error(&format!("attempting to write to ROM address: {:#010X}", address));
+            }
+
+            match self.ram().in_bounds(address - MEMORY_RAM_START) {
+                true => {
+                    self.ram().write_8(address - MEMORY_RAM_START, byte).unwrap();
+                }
+                false => {
+                    println!("attempting to write to invalid address: {:#010X}", address);
+                    self.exception_sender().send(Exception::PageFaultWrite(original_address)).unwrap();
+                }
+            }
+            Some(())
+        } else {
+            self.exception_sender().send(Exception::PageFaultWrite(original_address)).unwrap();
+            None
+        }
+    }
+    pub fn write_16_bypass(&mut self, address: u64, half: u16) -> Option<()> {
+        // first check if we can write to all addresses without faulting
+        if self.read_mmu_enabled() {
+            let (_, writable_0) = self.virtual_to_physical(address).unwrap_or_else(|| (0, false));
+            let (_, writable_1) = self.virtual_to_physical(address + 1).unwrap_or_else(|| (0, false));
+            if !writable_0 {
+                self.exception_sender().send(Exception::PageFaultWrite(address)).unwrap();
+                return None
+            }
+            if !writable_1 {
+                self.exception_sender().send(Exception::PageFaultWrite(address + 1)).unwrap();
+                return None
+            }
+        }
+
+        // then do the actual writes
+        self.write_8_bypass(address, (half & 0x00FF) as u8)?;
+        self.write_8_bypass(address + 1, (half >> 8) as u8)?;
+        Some(())
+    }
+    pub fn write_32_bypass(&mut self, address: u64, word: u32) -> Option<()> {
+        // first check if we can write to all addresses without faulting
+        if self.read_mmu_enabled() {
+            let (_, writable_0) = self.virtual_to_physical(address).unwrap_or_else(|| (0, false));
+            let (_, writable_1) = self.virtual_to_physical(address + 1).unwrap_or_else(|| (0, false));
+            let (_, writable_2) = self.virtual_to_physical(address + 2).unwrap_or_else(|| (0, false));
+            let (_, writable_3) = self.virtual_to_physical(address + 3).unwrap_or_else(|| (0, false));
+            if !writable_0 {
+                self.exception_sender().send(Exception::PageFaultWrite(address)).unwrap();
+                return None
+            }
+            if !writable_1 {
+                self.exception_sender().send(Exception::PageFaultWrite(address + 1)).unwrap();
+                return None
+            }
+            if !writable_2 {
+                self.exception_sender().send(Exception::PageFaultWrite(address + 2)).unwrap();
+                return None
+            }
+            if !writable_3 {
+                self.exception_sender().send(Exception::PageFaultWrite(address + 3)).unwrap();
+                return None
+            }
+        }
+
+        // then do the actual writes
+        self.write_8_bypass(address, (word & 0x000000FF) as u8)?;
+        self.write_8_bypass(address + 1, ((word & 0x0000FF00) >> 8) as u8)?;
+        self.write_8_bypass(address + 2, ((word & 0x00FF0000) >> 16) as u8)?;
+        self.write_8_bypass(address + 3, ((word & 0xFF000000) >> 24) as u8)?;
+        Some(())
+    }
+
+    pub fn write_64_bypass(&mut self, address: u64, long: u64) -> Option<()> {
+        // first check if we can write to all addresses without faulting
+        if self.read_mmu_enabled() {
+            let (_, writable_0) = self.virtual_to_physical(address).unwrap_or_else(|| (0, false));
+            let (_, writable_1) = self.virtual_to_physical(address + 1).unwrap_or_else(|| (0, false));
+            let (_, writable_2) = self.virtual_to_physical(address + 2).unwrap_or_else(|| (0, false));
+            let (_, writable_3) = self.virtual_to_physical(address + 3).unwrap_or_else(|| (0, false));
+            let (_, writable_4) = self.virtual_to_physical(address).unwrap_or_else(|| (0, false));
+            let (_, writable_5) = self.virtual_to_physical(address + 1).unwrap_or_else(|| (0, false));
+            let (_, writable_6) = self.virtual_to_physical(address + 2).unwrap_or_else(|| (0, false));
+            let (_, writable_7) = self.virtual_to_physical(address + 3).unwrap_or_else(|| (0, false));
+            if !writable_0 {
+                self.exception_sender().send(Exception::PageFaultWrite(address)).unwrap();
+                return None
+            }
+            if !writable_1 {
+                self.exception_sender().send(Exception::PageFaultWrite(address + 1)).unwrap();
+                return None
+            }
+            if !writable_2 {
+                self.exception_sender().send(Exception::PageFaultWrite(address + 2)).unwrap();
+                return None
+            }
+            if !writable_3 {
+                self.exception_sender().send(Exception::PageFaultWrite(address + 3)).unwrap();
+                return None
+            }
+
+            if !writable_4 {
+                self.exception_sender().send(Exception::PageFaultWrite(address + 4)).unwrap();
+                return None
+            }
+            if !writable_5 {
+                self.exception_sender().send(Exception::PageFaultWrite(address + 5)).unwrap();
+                return None
+            }
+            if !writable_6 {
+                self.exception_sender().send(Exception::PageFaultWrite(address + 6)).unwrap();
+                return None
+            }
+            if !writable_7 {
+                self.exception_sender().send(Exception::PageFaultWrite(address + 7)).unwrap();
+                return None
+            }
+        }
+
+        // then do the actual writes
+        self.write_8_bypass(address, (long & 0x000000FF) as u8)?;
+        self.write_8_bypass(address + 1, ((long & 0x0000FF00) >> 8) as u8)?;
+        self.write_8_bypass(address + 2, ((long & 0x00FF0000) >> 16) as u8)?;
+        self.write_8_bypass(address + 3, ((long & 0xFF000000) >> 24) as u8)?;
+        self.write_8_bypass(address + 4, ((long & 0x000000FF) >> 32) as u8)?;
+        self.write_8_bypass(address + 5, ((long & 0x0000FF00) >> 40) as u8)?;
+        self.write_8_bypass(address + 6, ((long & 0x00FF0000) >> 48) as u8)?;
+        self.write_8_bypass(address + 7, ((long & 0xFF000000) >> 56) as u8)?;
+        Some(())
+    }
+
+    pub fn write_usize_bypass(&mut self, address: u64, value: usize) -> Option<()> {
+        if cfg!(target_pointer_width = "32") {
+            self.write_32_bypass(address, value as u32)?;
+        } else {
+            self.write_64_bypass(address, value as u64)?;
+        }
+        Some(())
     }
 
     pub fn get_actual_pointer(&mut self, address: u64) -> Option<*mut u8> {
